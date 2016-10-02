@@ -6,114 +6,94 @@ local argon2  = require("argon2")
 local brotli  = require("brotli")
 local ppm     = require("ppm")
 
-function steg.encode(cfile, mfile, sfile, pwd)
-  --
-  -- Burn a message (mfile) into a cover image (cfile), and write
-  -- the output to the steganographic image (sfile). Use a 32 bit key (key)
-  -- for generating pseudo-random numbers and encrypting the message.
-  --
+function steg.cline(arg)
+  -- Parse the command line arguments.
   
-  -- Convert the cover image to PPM format and save it in a temporary file which
-  -- is removed at the end.
-  local in_ppmfile = os.tmpname()
-  local ctype = steg.imgtype(cfile)
-  assert(os.execute("convert "..ctype..":"..cfile.." ppm:"..in_ppmfile))
-
-  -- Read the cover image.
-  local cimg = ppm.readppm(in_ppmfile)
+  local action=nil
+  local iimage=nil
+  local oimage=nil
+  local mfile=nil
+  local verb=false
   
-  -- Burn 96 random bits into the first 96 pixels. These are used as salt for
-  -- the Argon2 hash and the chacha20 nonce.
-
-  local argon_salt = ""
-  cimg, argon_salt = steg.addsalt(cimg)
+  local idx=1
+  while idx <= #arg do
+    if arg[idx]=="-d" then
+      action="d"
+      idx = idx+1
+    elseif arg[idx]=="-e" then
+      action="e"
+      idx = idx+1
+    elseif arg[idx]=="-i" then
+      iimage=arg[idx+1]
+      idx = idx+2
+    elseif arg[idx]=="-m" then
+      mfile=arg[idx+1]
+      idx = idx+2
+    elseif arg[idx]=="-o" then
+      oimage=arg[idx+1]
+      idx = idx+2
+    elseif arg[idx]=="-v" then
+      verb=true
+      idx = idx+1
+    else
+      print("Invalid argument: ",arg[idx])
+      break
+    end
+  end
   
-  -- Generate the chacha20 key from the password and random salt.
-  
-  local key = steg.genkey(pwd, argon_salt)
-  
-  -- Create two nonces for use by chacha20. The first nonce is for use when
-  -- generating pseudo-random numbers, the second is for use when encrypting.
-  
-  local prng_nonce = argon_salt -- Will change this.
-  local enc_nonce  = argon_salt -- Will change this.
-
-  -- Shuffle the cover image pixels, starting with pixel 97 (after the salt which
-  -- is in the first 96 pixels).
-  cimg = steg.shuffle(cimg, key, prng_nonce)
-
-  -- Read and the message.
-  local msg = steg.readmsg(mfile)
-
-  -- Compress the message using Brotli compression (which is meant to be good
-  -- for text).
-  
-  msg = brotli.compress(msg)
-  
-  -- Encrypt the message.
-  msg = steg.encrypt(key, enc_nonce, msg)
-
-  -- Convert the message to bits.
-  print("Converting message to bits")
-  local msgbits = steg.cvttobits(msg)
-
-  -- Hide the message in the image after pixel 96.
-  print("Burning in bits")
-  cimg = steg.addbits(cimg, 96, msgbits)
-
-  -- Reorder the pixels in the cover image.
-  print("Reordering image")
-  cimg = steg.reorder(cimg)
-
-  -- Write the image back to a file.
-  print("Writing image")
-  local out_ppmfile = os.tmpname()
-  ppm.writeppm(cimg, out_ppmfile)
-
-  assert(os.execute("convert PPM:"..out_ppmfile.." "..ctype..":"..sfile))
-  
-  -- Remove the temporary PPM files.
-  os.remove(in_ppmfile)
-  os.remove(out_ppmfile)
-
+  return action,iimage, oimage, mfile, verb
 end
 
-function steg.decode(sfile, mfile, pwd)
+function steg.getpwd(msg)
+  -- Get a password without echoing it to the terminal.
+  io.write(msg.."\n")
+  io.flush()
   
-  -- Convert the stegonographic image to PPM format and save it in a temporary file
-  -- which is removed at the end.
- 
-  local ppmfile = os.tmpname()
-  local simgtype = steg.imgtype(sfile)
-  assert(os.execute("convert "..simgtype..":"..sfile.." ppm:"..ppmfile))
+  -- Get the current terminal settings.
+  local out = assert(io.popen("stty -g", 'r'),"Cannot get terminal settings.")
+  local termset = assert(out:read('*a'),"Cannot get terminal settings.")
+  out:close()
   
-  -- Read the steganographic image.
-  local simg  = ppm.readppm(ppmfile)
+  -- Turn off echoing.
+  assert(os.execute("stty -echo"),"Cannot turn off terminal echo.")
   
-  -- Get the salt from the LSB of the first 96 pixels.
-  local argon_salt = steg.retrsalt(simg)
+  -- Read the password from stdin.
+  local pwd = io.read()
   
-  -- Generate the chacha20 key
-  local key = steg.genkey(pwd, argon_salt)
-  
-  -- Generate two nonces used for the chacha20 pseudo-random number generator
-  -- and the encryption.
-  local prng_nonce = argon_salt
-  local enc_nonce  = argon_salt
+  -- Restore the original terminal settings
+  assert(os.execute("stty "..termset),"Cannot restore terminal settings.")
 
-  -- Shuffle the selected pixels.
-  simg = steg.shuffle(simg, key, prng_nonce)
+  return pwd
+end
 
-  -- Extract and decrypt the message from the shuffled pixels.
-  local msg = steg.retrieve_msg(simg)
-  msg = steg.decrypt(key, enc_nonce, msg)
-  msg = brotli.decompress(msg)
-
-  -- Write the message to the file.
-  print(msg)
+function steg.incnonce(nonce)
+  -- Increment a nonce (represented as a string) by one.
+  local noncepart = {}
+  local pos = 1
+  local idx = 1
   
-  -- Remove the temporary PPM file
-  os.remove(ppmfile)
+  while pos <= string.len(nonce) do
+    noncepart[idx],pos = string.unpack("<I6", nonce, pos)
+    idx = idx + 1
+  end
+
+  local inc = 1
+  for i=#noncepart,1,-1 do
+    if inc == 1 then
+      local incval = (noncepart[i]+1)%(2^48)
+      if incval > noncepart[i] then
+        inc = 0
+      end
+      noncepart[i] = incval
+    end  
+  end
+
+  local incnonce = ""
+  for i=1,#noncepart,1 do
+    incnonce = incnonce..string.pack("<I6", noncepart[i])
+  end
+  
+  return incnonce    
 end
 
 function steg.imgtype(infile)
@@ -168,9 +148,9 @@ function steg.decrypt(key, enc_nonce, encmsg)
   return msg
 end
   
-function steg.genkey(password, salt)
+function steg.genkey(pwd, salt)
   -- Use argon2 to generate a 32 byte key.
-  local hash = assert(argon2.encrypt("password", "somesalt", {
+  local hash = assert(argon2.encrypt(pwd, salt, {
     t_cost = 4,
     m_cost = 24,
     parallelism = 2
@@ -193,7 +173,7 @@ function steg.cvttobits(msg)
 
   -- Prefix the message with the message length in bits.
 
-  msg = string.pack("I6", string.len(msg)*8)..msg
+  msg = string.pack("<I6", string.len(msg)*8)..msg
 
   -- Convert the message to bits.
 
@@ -251,7 +231,7 @@ function steg.retrieve_msg(img)
     end
   end
 
-  local msglen = string.unpack("I6", lenstr)
+  local msglen = string.unpack("<I6", lenstr)
 
   -- Get the remainder of the message.
   
@@ -323,7 +303,7 @@ function steg.shuffle(img, key, prng_nonce)
     --
     -- Generate a pseudo-random number between 97 and i
     --
-    rndpos,idx = string.unpack("I6", rnd, idx)
+    rndpos,idx = string.unpack("<I6", rnd, idx)
     rndpos     = rndpos%(i-96) + 97
 
     --

@@ -34,7 +34,7 @@ function ppm.readppm(filename)
     if tonumber(ppm.maxval) <= 255 then
         ppm.rgb_format  = "B"
     else
-        ppm.rgb_format  = "<I[2]"     -- Little endian
+        ppm.rgb_format  = "<I2"     -- Little endian
     end
 
     local pos = 1
