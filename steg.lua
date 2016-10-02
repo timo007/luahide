@@ -50,12 +50,22 @@ function steg.cline(arg)
       verb=true
       idx = idx+1
     else
-      print("Invalid argument: ",arg[idx])
-      break
+      io.write("Error: Invalid argument: "..arg[idx].."\n")
+      os.exit(2)
     end
   end
   
   return action,iimage, oimage, mfile, verb
+end
+
+function steg.file_exists(name)
+  local f=io.open(name, "r")
+  if f then
+    io.close(f)
+    return true
+  else
+    return false
+  end
 end
 
 function steg.getpwd(msg)

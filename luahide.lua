@@ -27,13 +27,23 @@ local verb    = false -- Verbose option.
 
 action, iimage, oimage, mfile, verb = steg.cline(arg)
 
-
 if action=="e" then
   --
   -- Burn a message (mfile) into a cover image (iimage), and write
   -- the output to the steganographic image (oimage). Use a 32 bit key (key)
   -- for generating pseudo-random numbers and encrypting the message.
   --
+
+  -- Check if required files exist.
+  if not steg.file_exists(iimage) then
+    io.write("Error: Cover image, "..iimage..", does not exist\n")
+    os.exit(1)
+  end
+
+  if not steg.file_exists(mfile) then
+    io.write("Error: Message file, "..mfile..", does not exist\n")
+    os.exit(1)
+  end
 
   -- Get a password for encryption and pseudo-random number generation.
   local pwd = ""
@@ -109,22 +119,33 @@ if action=="e" then
   end
   
   -- Encrypt the message.
+  if verb then
+    io.write("Encrypting message\n")
+  end
   msg = steg.encrypt(key, enc_nonce, msg)
 
   -- Convert the message to bits.
-  print("Converting message to bits")
+  if verb then
+    io.write("Converting message to bits\n")
+  end
   local msgbits = steg.cvttobits(msg)
 
   -- Hide the message in the image after pixel 96.
-  print("Burning in bits")
+  if verb then
+    io.write("Burning in bits\n")
+  end
   cimg = steg.addbits(cimg, 96, msgbits)
 
   -- Reorder the pixels in the cover image.
-  print("Reordering image")
+  if verb then
+    io.write("Reordering image\n")
+  end
   cimg = steg.reorder(cimg)
 
   -- Write the image back to a file.
-  print("Writing image")
+  if verb then
+    io.write("Writing image\n")
+  end
   local out_ppmfile = os.tmpname()
   ppm.writeppm(cimg, out_ppmfile)
 
